@@ -48,6 +48,42 @@ func (q *Queries) GetAllFeeds(ctx context.Context) ([]GetAllFeedsRow, error) {
 	return items, nil
 }
 
+const getFeed = `-- name: GetFeed :one
+SELECT name, url, last_fetched_at, user_id FROM feeds where feeds.url = $1
+`
+
+func (q *Queries) GetFeed(ctx context.Context, url string) (Feed, error) {
+	row := q.db.QueryRowContext(ctx, getFeed, url)
+	var i Feed
+	err := row.Scan(
+		&i.Name,
+		&i.Url,
+		&i.LastFetchedAt,
+		&i.UserID,
+	)
+	return i, err
+}
+
+const getNextFeedToFetch = `-- name: GetNextFeedToFetch :one
+SELECT name, url, last_fetched_at, user_id
+FROM feeds
+ORDER BY 
+    last_fetched_at ASC NULLS FIRST
+LIMIT 1
+`
+
+func (q *Queries) GetNextFeedToFetch(ctx context.Context) (Feed, error) {
+	row := q.db.QueryRowContext(ctx, getNextFeedToFetch)
+	var i Feed
+	err := row.Scan(
+		&i.Name,
+		&i.Url,
+		&i.LastFetchedAt,
+		&i.UserID,
+	)
+	return i, err
+}
+
 const insertFeed = `-- name: InsertFeed :one
 INSERT INTO feeds (name , url , user_id)
 VALUES (
@@ -55,7 +91,7 @@ VALUES (
     $2,
     $3
 )
-RETURNING name, url, user_id
+RETURNING name, url, last_fetched_at, user_id
 `
 
 type InsertFeedParams struct {
@@ -67,6 +103,24 @@ type InsertFeedParams struct {
 func (q *Queries) InsertFeed(ctx context.Context, arg InsertFeedParams) (Feed, error) {
 	row := q.db.QueryRowContext(ctx, insertFeed, arg.Name, arg.Url, arg.UserID)
 	var i Feed
-	err := row.Scan(&i.Name, &i.Url, &i.UserID)
+	err := row.Scan(
+		&i.Name,
+		&i.Url,
+		&i.LastFetchedAt,
+		&i.UserID,
+	)
 	return i, err
+}
+
+const markFeedFetched = `-- name: MarkFeedFetched :exec
+
+
+UPDATE feeds
+SET last_fetched_at = NOW()
+WHERE url = $1
+`
+
+func (q *Queries) MarkFeedFetched(ctx context.Context, url string) error {
+	_, err := q.db.ExecContext(ctx, markFeedFetched, url)
+	return err
 }

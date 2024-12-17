@@ -85,28 +85,63 @@ func handlerUsers(s *state, cmd command) error {
 }
 
 func handlerAgg(s *state, cmd command) error {
-	rssFeed, err := fetchFeed(context.Background(), "https://www.wagslane.dev/index.xml")
-	if err != nil {
-		log.Fatal(err)
+	if len(cmd.args) < 1 || len(cmd.args) > 2 {
+		return fmt.Errorf("usage: %v <time_between_reqs>", cmd.name)
 	}
-	fmt.Println(rssFeed)
 
-	return nil
+	timeBetweenRequests, err := time.ParseDuration(cmd.args[0])
+	if err != nil {
+		return fmt.Errorf("invalid duration: %w", err)
+	}
+
+	log.Printf("Collecting feeds every %s...", timeBetweenRequests)
+
+	ticker := time.NewTicker(timeBetweenRequests)
+
+	for ; ; <-ticker.C {
+		scrapeFeeds(s)
+	}
 }
 
-func handlerAddFeed(s *state, cmd command) error {
-	if len(cmd.args) <= 1 {
-		return fmt.Errorf("the addfeed command needs to argument: nameOfTheFeed feedURL")
-	}
-	user, err := s.db.GetUser(context.Background(), s.config.CurrentUserName)
+func scrapeFeeds(s *state) {
+	feed, err := s.db.GetNextFeedToFetch(context.Background())
 	if err != nil {
-		return fmt.Errorf("could not get the user: %v", err)
+		log.Println("Couldn't get next feeds to fetch", err)
+		return
 	}
+	log.Println("Found a feed to fetch!")
+	scrapeFeed(s.db, feed)
+}
+
+func scrapeFeed(db *database.Queries, feed database.Feed) {
+	 err := db.MarkFeedFetched(context.Background(), feed.Url)
+	if err != nil {
+		log.Printf("Couldn't mark feed %s fetched: %v", feed.Name, err)
+		return
+	}
+
+	feedData, err := fetchFeed(context.Background(), feed.Url)
+	if err != nil {
+		log.Printf("Couldn't collect feed %s: %v", feed.Name, err)
+		return
+	}
+	for _, item := range feedData.Channel.Items {
+		fmt.Printf("Found post: %s\n", item.Title)
+	}
+	log.Printf("Feed %s collected, %v posts found", feed.Name, len(feedData.Channel.Items))
+}
+
+func handlerAddFeed(s *state, cmd command, user database.User) error {
+	if len(cmd.args) != 2 {
+		return fmt.Errorf("the addfeed command needs two argument: nameOfTheFeed feedURL")
+	}
+
 	feed, err := s.db.InsertFeed(context.Background(), database.InsertFeedParams{Name: cmd.args[0], Url: cmd.args[1], UserID: user.ID})
 	if err != nil {
 		return fmt.Errorf("couldn't not add the feed : %v", err)
 	}
-	fmt.Println(feed)
+	_, err = s.db.CreateFeedFollow(context.Background(), database.CreateFeedFollowParams{ID: uuid.New(), UserID: user.ID, FeedID: feed.Url})
+
 	return nil
 }
 
@@ -118,9 +153,54 @@ func handlerFeeds(s *state, cmd command) error {
 	if err != nil {
 		return err
 	}
-	
-	for _,feed := range feeds {
-		fmt.Printf("- %v\n- %v\n", feed.Name,feed.Name_2)
+
+	for _, feed := range feeds {
+		fmt.Printf("- %v\n- %v\n", feed.Name, feed.Name_2)
 	}
 	return nil
+}
+
+func handlerFollow(s *state, cmd command, user database.User) error {
+	if len(cmd.args) == 0 {
+		return fmt.Errorf("you need a to type the blog url after the follow command")
+	} else if len(cmd.args) > 1 {
+		return fmt.Errorf("follow command takes one argument (blog url) but found %v", len(cmd.args))
+	}
+	feed, err := s.db.GetFeed(context.Background(), cmd.args[0])
+	if err != nil {
+		return err
+	}
+
+	_, err = s.db.CreateFeedFollow(context.Background(), database.CreateFeedFollowParams{ID: uuid.New(), UserID: user.ID, FeedID: feed.Url})
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func handlerFollowing(s *state, cmd command, user database.User) error {
+	if len(cmd.args) != 0 {
+		return fmt.Errorf("following command expect no argument")
+	}
+
+	feeds, err := s.db.GetFeedFollowsForUser(context.Background(), user.ID)
+	if err != nil {
+		return fmt.Errorf("couldn't fetch your following feed")
+	}
+	for _, feed := range feeds {
+		fmt.Println(feed.FeedName)
+	}
+	return nil
+}
+
+func handlerUnFollow(s *state, cmd command, user database.User) error {
+	if len(cmd.args) != 1 {
+		return fmt.Errorf("unfollow command need one argument: feed url")
+	}
+	if err := s.db.UnFollowFeed(context.Background(), database.UnFollowFeedParams{UserID: user.ID, FeedID: cmd.args[0]}); err != nil {
+		return fmt.Errorf("could not unfollow the feed: %v", err)
+	}
+	return nil
+
 }

@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"database/sql"
+	"fmt"
 	"log"
 	"os"
 
@@ -30,18 +32,21 @@ func main() {
 	//initiate register command
 	cmds.register("register", handlerRegister)
 	//initiate reset command
-	cmds.register("reset",handlerReset)
+	cmds.register("reset", handlerReset)
 	//initiate users command
-	cmds.register("users",handlerUsers)
+	cmds.register("users", handlerUsers)
 	// initiate agg command
 	cmds.register("agg", handlerAgg)
 	// initiate addfeed command
-	cmds.register("addfeed" , handlerAddFeed)
+	cmds.register("addfeed", middlewareLoggedIn(handlerAddFeed))
 	//initiate feeds command
-	cmds.register("feeds",handlerFeeds)
+	cmds.register("feeds", handlerFeeds)
+	//initiate follow command
+	cmds.register("follow", middlewareLoggedIn(handlerFollow))
+	//initiate following command
+	cmds.register("following", middlewareLoggedIn(handlerFollowing))
+	cmds.register("unfollow",middlewareLoggedIn(handlerUnFollow))
 
-
-	
 	//initiating db
 	db, err := sql.Open("postgres", s.config.DBURL)
 	if err != nil {
@@ -69,4 +74,14 @@ func main() {
 	}
 	defer db.Close()
 	os.Exit(0)
+}
+
+func middlewareLoggedIn(handler func(*state, command, database.User) error) func(*state, command) error {
+	return func(s *state, cmd command) error {
+		user, err := s.db.GetUser(context.Background(), s.config.CurrentUserName)
+		if err != nil {
+			return fmt.Errorf("you must be logged in to perform this action")
+		}
+		return handler(s, cmd, user) // Pass the logged-in user to the handler
+	}
 }
