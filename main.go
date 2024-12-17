@@ -1,24 +1,72 @@
 package main
 
 import (
-	"fmt"
+	"database/sql"
 	"log"
+	"os"
 
 	"github.com/abdullah0iq/gator/internal/config"
+	"github.com/abdullah0iq/gator/internal/database"
+	_ "github.com/lib/pq"
 )
 
 func main() {
+	// initiate config
 	cfg, err := config.Read()
 	if err != nil {
-		log.Fatalf("error reading config: %v", err)
+		log.Fatal(err)
 	}
-	fmt.Printf("Read config: %+v\n", cfg)
 
-	err = cfg.SetUser("lane")
+	cfg.DBURL = "postgres://Abdullah:@localhost:5432/gator?sslmode=disable"
 
-	cfg, err = config.Read()
+	//initiate state
+	s := state{config: &cfg}
+
+	//initiate commands
+	cmds := commands{commandsMap: map[string]func(*state, command) error{}}
+
+	//initiate register command
+	cmds.register("login", handlerLogin)
+	//initiate register command
+	cmds.register("register", handlerRegister)
+	//initiate reset command
+	cmds.register("reset",handlerReset)
+	//initiate users command
+	cmds.register("users",handlerUsers)
+	// initiate agg command
+	cmds.register("agg", handlerAgg)
+	// initiate addfeed command
+	cmds.register("addfeed" , handlerAddFeed)
+	//initiate feeds command
+	cmds.register("feeds",handlerFeeds)
+
+
+	
+	//initiating db
+	db, err := sql.Open("postgres", s.config.DBURL)
 	if err != nil {
-		log.Fatalf("error reading config: %v", err)
+		log.Fatal(err)
 	}
-	fmt.Printf("Read config again: %+v\n", cfg)
+	if err := db.Ping(); err != nil {
+		log.Fatalf("Database connection failed: %v", err)
+	} else {
+		log.Println("Successfully connected to the database!")
+	}
+	dbQueries := database.New(db)
+	s.db = dbQueries
+
+	//getting arguments
+	args := os.Args
+	if len(args) < 2 {
+		log.Fatal("No argument")
+	}
+	commandName := args[1]
+	args = args[2:]
+	cmd := command{name: commandName, args: args}
+	err = cmds.run(&s, cmd)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer db.Close()
+	os.Exit(0)
 }

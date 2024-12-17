@@ -55,15 +55,11 @@ func write(cfg Config) error {
 		return err
 	}
 
-	file, err := os.Create(fullPath)
+	data , err := json.Marshal(cfg)
 	if err != nil {
 		return err
 	}
-	defer file.Close()
-
-	encoder := json.NewEncoder(file)
-	err = encoder.Encode(cfg)
-	if err != nil {
+	if err =os.WriteFile(fullPath , data , 6663); err != nil{
 		return err
 	}
 
